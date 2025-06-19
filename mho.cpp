@@ -46,8 +46,8 @@ int months = 3;                     // j
 int t_growth = 3;                   // growth period in months
 vector<double> TLA = {300, 200};    // total land allocated per crop i
 vector<double> MHA = {120,  80};    // max harvest per month per crop i
-vector<double> ub_vec;              // per-variable upper bound, size n*m
-vector<double> lb_vec;              // per-variable lower bound, size n*m
+vector<vector<double>> ub_vec;      // per-variable upper bound, size [crops][months]
+vector<vector<double>> lb_vec;      // per-variable lower bound, size [crops][months]
 int dim;                            // Problem dimension
 
 
@@ -64,10 +64,7 @@ vector<vector<double>> C = {
 // --- End Problem Definition ---
 
 // --- Helper Functions ---
-// 2d xij to 1d array index
-inline int idx(int i, int j) {
-    return i*months + j;
-}
+// idx function removed
 
 // MHO Modification 1: Sine chaotic map initialization
 double sine_map(double x, double alpha) {
@@ -80,109 +77,108 @@ double sine_map(double x, double alpha) {
 }
 
 // Objective function (Minimization)
-double objective(const vector<double>& X) {
+double objective(const vector<vector<double>>& X) {
     double profit = 0.0;
-    if (X.empty() || X.size() != dim) {
-        cerr << "Error: Invalid dimension in objective function. Expected " << dim << ", Got " << X.size() << endl;
+    if (X.empty() || X.size() != crops || X[0].size() != months) {
+        cerr << "Error: Invalid dimension in objective function. Expected [" << crops << "," << months << "], Got [" << X.size() << "," << (X.empty() ? 0 : X[0].size()) << "]" << endl;
         return std::numeric_limits<double>::max();
-     }
-    for (int i = 0; i < crops; ++i) {
-        for (int j = 0; j < months; ++j) {
-            profit += X[idx(i,j)] * (G[i][j] - C[i][j]);
+    }
+    for (size_t i = 0; i < X.size(); ++i) {
+        for (size_t j = 0; j < X[i].size(); ++j) {
+            profit += X[i][j] * (G[i][j] - C[i][j]);
         }
     }
     return -profit; // Minimize negative profit
 }
 
 // --- Constraints ---
-void apply_constraints(vector<double>& X) {
-     if (X.empty() || lb_vec.empty() || ub_vec.empty() || X.size() != dim) {
-         cerr << "Error: Invalid input to apply_constraints." << endl;
-         return;
-     }
-     // Apply bounds first
-     for (int k = 0; k < dim; ++k) {
-         X[k] = max(lb_vec[k], min(X[k], ub_vec[k]));
-     }
-
-     // Apply problem-specific constraints (Land allocation, Double cropping)
-     // These might need adjustment based on the actual optimization problem
-     // Land allocation
-     for (int i = 0; i < crops; ++i) {
-         for (int m0 = 0; m0 < months; ++m0) {
-             double sum = 0;
-             vector<int> indices_to_scale; // Store indices involved in this constraint check
-             for (int dt = 0; dt < t_growth; ++dt) {
-                 int mj = (m0 - dt + months) % months;
-                 int k = idx(i, mj);
-                 sum += X[k];
-                 indices_to_scale.push_back(k);
-             }
-             if (sum > TLA[i] + 1e-9) {
-                 if (abs(sum) < 1e-9) continue; // Avoid division by zero
-                 double scale = TLA[i] / sum;
-                 for (int k : indices_to_scale) {
-                     X[k] *= scale;
-                 }
-             }
-         }
-     }
-
-     // Double cropping
-     for (int i = 0; i < crops; ++i) {
-         double total = 0;
-          vector<int> indices_to_scale;
-         for (int j = 0; j < months; ++j) {
-             int k = idx(i,j);
-             total += X[k];
-             indices_to_scale.push_back(k);
-         }
-         double cap = 2.0 * TLA[i];
-         if (total > cap + 1e-9) {
-              if (abs(total) < 1e-9) continue;
-             double scale = cap / total;
-             for (int k : indices_to_scale) {
-                 X[k] *= scale;
-             }
-         }
-     }
-
-     // Re-apply bounds after constraint adjustments
-     for (int k = 0; k < dim; ++k) {
-         X[k] = max(lb_vec[k], min(X[k], ub_vec[k]));
-     }
+void apply_constraints(vector<vector<double>>& X) {
+    if (X.empty() || lb_vec.empty() || ub_vec.empty() || X.size() != crops || X[0].size() != months) {
+        cerr << "Error: Invalid input to apply_constraints." << endl;
+        return;
+    }
+    // Apply bounds first
+    for (size_t i = 0; i < X.size(); ++i) {
+        for (size_t j = 0; j < X[i].size(); ++j) {
+            X[i][j] = max(lb_vec[i][j], min(X[i][j], ub_vec[i][j]));
+        }
+    }
+    // Land allocation
+    for (size_t i = 0; i < X.size(); ++i) {
+        for (size_t m0 = 0; m0 < X[i].size(); ++m0) {
+            double sum = 0;
+            vector<pair<size_t, size_t>> indices_to_scale;
+            for (int dt = 0; dt < t_growth; ++dt) {
+                size_t mj = (m0 - dt + months) % months;
+                sum += X[i][mj];
+                indices_to_scale.push_back({i, mj});
+            }
+            if (sum > TLA[i] + 1e-9) {
+                if (abs(sum) < 1e-9) continue;
+                double scale = TLA[i] / sum;
+                for (auto& idx : indices_to_scale) {
+                    X[idx.first][idx.second] *= scale;
+                }
+            }
+        }
+    }
+    // Double cropping
+    for (size_t i = 0; i < X.size(); ++i) {
+        double total = 0;
+        vector<pair<size_t, size_t>> indices_to_scale;
+        for (size_t j = 0; j < X[i].size(); ++j) {
+            total += X[i][j];
+            indices_to_scale.push_back({i, j});
+        }
+        double cap = 2.0 * TLA[i];
+        if (total > cap + 1e-9) {
+            if (abs(total) < 1e-9) continue;
+            double scale = cap / total;
+            for (auto& idx : indices_to_scale) {
+                X[idx.first][idx.second] *= scale;
+            }
+        }
+    }
+    // Re-apply bounds after constraint adjustments
+    for (size_t i = 0; i < X.size(); ++i) {
+        for (size_t j = 0; j < X[i].size(); ++j) {
+            X[i][j] = max(lb_vec[i][j], min(X[i][j], ub_vec[i][j]));
+        }
+    }
 }
 // --- End Constraints ---
 
 
 // --- Utility Functions ---
 // Print population state
-void print_population(const string& algo_name, int t_iter, const vector<vector<double>>& pop, const vector<double>& fit, int leader_idx) {
-     int N = pop.size();
-     if (N == 0 || pop[0].empty()) {
-         cout << "\n--- " << algo_name << " Population State (Iter " << t_iter << ") --- EMPTY\n";
-         return;
-     }
-     int current_dim = pop[0].size();
-     cout << "\n--- " << algo_name << " Population State (Iter " << t_iter << ") --- \n";
-     cout << "Hippo ";
-     for (int j = 0; j < current_dim; ++j) cout << setw(10) << "Var" << j+1;
-     cout << setw(15) << "Fitness";
-     cout << "\n" << string(6 + 10*current_dim + 15, '-') << "\n";
-     for (int h = 0; h < N; ++h) {
-         cout << setw(5) << h << " |";
-         if (h >= pop.size() || pop[h].size() != current_dim) { cout << " Error size/dim\n"; continue; }
-         for (double x : pop[h]) cout << setw(10) << fixed << setprecision(3) << x;
-         if (h >= fit.size()) { cout << " Error fit size\n"; continue; }
-         cout << setw(15) << fixed << setprecision(5) << fit[h];
-         if (h == leader_idx) cout << " (Leader)";
-         cout << "\n";
-     }
-      if (leader_idx >= 0 && leader_idx < N && leader_idx < fit.size()) {
+void print_population(const string& algo_name, int t_iter, const vector<vector<vector<double>>>& hippo, const vector<double>& fit, int leader_idx) {
+    int N = hippo.size();
+    if (N == 0 || hippo[0].empty() || hippo[0][0].empty()) {
+        cout << "\n--- " << algo_name << " Population State (Iter " << t_iter << ") --- EMPTY\n";
+        return;
+    }
+    cout << "\n--- " << algo_name << " Population State (Iter " << t_iter << ") --- \n";
+    cout << "Hippo ";
+    for (size_t i = 0; i < hippo[0].size(); ++i)
+        for (size_t j = 0; j < hippo[0][i].size(); ++j)
+            cout << setw(10) << "C" << i+1 << "M" << j+1;
+    cout << setw(15) << "Fitness";
+    cout << "\n" << string(6 + 10*crops*months + 15, '-') << "\n";
+    for (size_t h = 0; h < hippo.size(); ++h) {
+        cout << setw(5) << h << " |";
+        for (const auto& crop : hippo[h])
+            for (const auto& val : crop)
+                cout << setw(10) << fixed << setprecision(3) << val;
+        if (h >= fit.size()) { cout << " Error fit size\n"; continue; }
+        cout << setw(15) << fixed << setprecision(5) << fit[h];
+        if (h == leader_idx) cout << " (Leader)";
+        cout << "\n";
+    }
+    if (leader_idx >= 0 && leader_idx < N && leader_idx < fit.size()) {
         cout << "Best Fitness (" << algo_name << "): " << fit[leader_idx] << endl;
-     } else {
-         cout << "Best Fitness (" << algo_name << "): Invalid leader index." << endl;
-     }
+    } else {
+        cout << "Best Fitness (" << algo_name << "): Invalid leader index." << endl;
+    }
 }
 
 // Levy flight vector (Used in original HO Phase 2)
@@ -225,155 +221,141 @@ int main() {
     dim = crops * months;
     if (dim <= 0) { cerr << "Error: Problem dimension must be positive." << endl; return 1; }
 
-    lb_vec.resize(dim, 0.0);
-    ub_vec.resize(dim);
+    lb_vec.resize(crops, vector<double>(months, 0.0));
+    ub_vec.resize(crops, vector<double>(months));
     for (int i = 0; i < crops; ++i) {
-        for (int j = 0; j < months; ++j) ub_vec[idx(i,j)] = MHA[i];
+        for (int j = 0; j < months; ++j) ub_vec[i][j] = MHA[i];
     }
 
-    vector<vector<double>> pop(N, vector<double>(dim));
+    vector<vector<vector<double>>> hippo(N, vector<vector<double>>(crops, vector<double>(months)));
     vector<double> fit(N);
 
     // MHO Modification 1: Sine Chaotic Map Initialization
     cout << "Initializing MHO population using Sine Chaotic Map...\n";
     double chaos_seed = rand_double(0.01, 0.99);
-    for (int i = 0; i < N; ++i) {
-        for (int k = 0; k < dim; ++k) {
-            chaos_seed = sine_map(chaos_seed, alpha_chaos);
-            // Ensure chaos_seed stays within [0, 1] for the formula lb + seed * (ub - lb)
-            if (chaos_seed < 0.0 || chaos_seed > 1.0 || std::isnan(chaos_seed) || std::isinf(chaos_seed)) {
-                chaos_seed = rand_double(0.01, 0.99); // Reset if it escapes [0, 1]
+    for (int h = 0; h < N; ++h) {
+        for (int i = 0; i < crops; ++i) {
+            for (int j = 0; j < months; ++j) {
+                chaos_seed = sine_map(chaos_seed, alpha_chaos);
+                if (chaos_seed < 0.0 || chaos_seed > 1.0 || std::isnan(chaos_seed) || std::isinf(chaos_seed)) {
+                    chaos_seed = rand_double(0.01, 0.99);
+                }
+                hippo[h][i][j] = lb_vec[i][j] + chaos_seed * (ub_vec[i][j] - lb_vec[i][j]);
             }
-            pop[i][k] = lb_vec[k] + chaos_seed * (ub_vec[k] - lb_vec[k]);
         }
-        apply_constraints(pop[i]);
-        fit[i] = objective(pop[i]);
+        apply_constraints(hippo[h]);
+        fit[h] = objective(hippo[h]);
     }
 
     int leader_idx = min_element(fit.begin(), fit.end()) - fit.begin();
     double best_fit_global = fit[leader_idx];
-    vector<double> best_sol_global = pop[leader_idx];
+    vector<vector<double>> best_sol_global = hippo[leader_idx];
 
     cout << "\nInitial State:";
-    print_population("MHO", 0, pop, fit, leader_idx);
+    print_population("MHO", 0, hippo, fit, leader_idx);
     cout << "-----------------------------------------\n";
     // --- End Initialization ---
 
     // --- Main Optimization Loop ---
     for (int t_iter = 1; t_iter <= T_max; ++t_iter) {
-        cout << "\n<<<<<<<< Iteration " << t_iter << " >>>>>>>>\n";
+        cout << "\n<<<<<<<< Iteration " << t_iter << " >>>>>>>>>\n";
 
-        vector<vector<double>> pop_next = pop; // Work on a copy for updates
+        vector<vector<vector<double>>> hippo_next = hippo;
         vector<double> fit_next = fit;
 
         // --- Base HO Phases (with MHO Modifications) ---
-
-        // MHO Modification 2: Changed Convergence Factor
-        double T_mho_conv = 1.0 - pow((double(t_iter) / T_max), 6.0); // MHO Eq 13
-
-        // HO Phase 1: Position Update (Modified with T_mho_conv)
+        double T_mho_conv = 1.0 - pow((double(t_iter) / T_max), 6.0);
         cout << " MHO Phase 1 (Position Update)...\n";
-        vector<vector<double>> X_P1(N, vector<double>(dim)); // Potential "Male" update
-        vector<vector<double>> X_P2(N, vector<double>(dim)); // Potential "Female/Immature" update
+        vector<vector<vector<double>>> X_P1(N, vector<vector<double>>(crops, vector<double>(months)));
+        vector<vector<vector<double>>> X_P2(N, vector<vector<double>>(crops, vector<double>(months)));
 
-        for (int i = 0; i < N; ++i) {
-            vector<double> X_current = pop[i];
+        for (int h = 0; h < N; ++h) {
+            vector<vector<double>> X_current = hippo[h];
             int I1 = rand_int(1, 2);
             int I2 = rand_int(1, 2);
-
-            // Calculate MG (Mean of Random Group)
-            vector<double> MG(dim, 0.0);
-             if (N > 1) {
-                 int rand_group_size = rand_int(1, max(1, N - 1)); // Ensure size is at least 1 if N > 1
-                 vector<int> indices(N);
-                 iota(indices.begin(), indices.end(), 0);
-                 std::shuffle(indices.begin(), indices.end(), rng);
-                 int count = 0;
-                 for (int j = 0; j < N && count < rand_group_size; ++j) {
-                     if (indices[j] == i) continue;
-                     for (int k = 0; k < dim; ++k) MG[k] += pop[indices[j]][k];
-                     count++;
-                 }
-                 if (count > 0) for (int k = 0; k < dim; ++k) MG[k] /= count;
-                 else MG = X_current;
-             } else MG = X_current;
-
-
-            // Calculate random factors A and B for Female/Immature update
-             vector<double> factor_A(dim), factor_B(dim);
-             int scenario_A = rand_int(0, 4); int scenario_B = rand_int(0, 4);
-             vector<double> r_vec(dim); for(int k=0; k<dim; ++k) r_vec[k] = rand_double(0,1); // Temp random vector
-             // Function to calculate factor based on scenario
-             auto calculate_factor = [&](int scenario, int I_val) -> vector<double> {
-                 vector<double> factor(dim);
-                 if (scenario == 0) for(int k=0; k<dim; ++k) factor[k] = I_val * r_vec[k] + double(!rand_int(0,1));
-                 else if (scenario == 1) for(int k=0; k<dim; ++k) factor[k] = 2.0 * r_vec[k] - 1.0;
-                 else if (scenario == 2) for(int k=0; k<dim; ++k) factor[k] = r_vec[k];
-                 else if (scenario == 3) for(int k=0; k<dim; ++k) factor[k] = I_val * r_vec[k] + double(!rand_int(0,1));
-                 else { double r_scalar = rand_double(0,1); fill(factor.begin(), factor.end(), r_scalar); }
-                 return factor;
-             };
+            vector<vector<double>> MG(crops, vector<double>(months, 0.0));
+            if (N > 1) {
+                int rand_group_size = rand_int(1, max(1, N - 1));
+                vector<int> indices(N);
+                iota(indices.begin(), indices.end(), 0);
+                std::shuffle(indices.begin(), indices.end(), rng);
+                int count = 0;
+                for (int j = 0; j < N && count < rand_group_size; ++j) {
+                    if (indices[j] == h) continue;
+                    for (int i = 0; i < crops; ++i)
+                        for (int m = 0; m < months; ++m)
+                            MG[i][m] += hippo[indices[j]][i][m];
+                    count++;
+                }
+                if (count > 0) for (int i = 0; i < crops; ++i) for (int m = 0; m < months; ++m) MG[i][m] /= count;
+                else MG = X_current;
+            } else MG = X_current;
+            vector<vector<double>> factor_A(crops, vector<double>(months)), factor_B(crops, vector<double>(months));
+            int scenario_A = rand_int(0, 4); int scenario_B = rand_int(0, 4);
+            vector<vector<double>> r_vec(crops, vector<double>(months));
+            for(int i=0; i<crops; ++i) for(int j=0; j<months; ++j) r_vec[i][j] = rand_double(0,1);
+            auto calculate_factor = [&](int scenario, int I_val) -> vector<vector<double>> {
+                vector<vector<double>> factor(crops, vector<double>(months));
+                if (scenario == 0) for(int i=0; i<crops; ++i) for(int j=0; j<months; ++j) factor[i][j] = I_val * r_vec[i][j] + double(!rand_int(0,1));
+                else if (scenario == 1) for(int i=0; i<crops; ++i) for(int j=0; j<months; ++j) factor[i][j] = 2.0 * r_vec[i][j] - 1.0;
+                else if (scenario == 2) for(int i=0; i<crops; ++i) for(int j=0; j<months; ++j) factor[i][j] = r_vec[i][j];
+                else if (scenario == 3) for(int i=0; i<crops; ++i) for(int j=0; j<months; ++j) factor[i][j] = I_val * r_vec[i][j] + double(!rand_int(0,1));
+                else { double r_scalar = rand_double(0,1); for(int i=0; i<crops; ++i) for(int j=0; j<months; ++j) factor[i][j] = r_scalar; }
+                return factor;
+            };
             factor_A = calculate_factor(scenario_A, I2);
-            factor_B = calculate_factor(scenario_B, I1); // Note: HO.m seems to use same factors for P1/P2, but paper might imply separate
-
-
-            // Calculate potential update X_P1 ("Male"-like)
+            factor_B = calculate_factor(scenario_B, I1);
             double r_scalar_p1 = rand_double(0,1);
-            for (int k = 0; k < dim; ++k) {
-                 X_P1[i][k] = X_current[k] + r_scalar_p1 * (pop[leader_idx][k] - I1 * X_current[k]);
+            for (int i = 0; i < crops; ++i) {
+                for (int j = 0; j < months; ++j) {
+                    X_P1[h][i][j] = X_current[i][j] + r_scalar_p1 * (hippo[leader_idx][i][j] - I1 * X_current[i][j]);
+                }
             }
-
-            // Calculate potential update X_P2 ("Female/Immature"-like, uses MHO convergence logic)
-            // MHO Modification 2: Use T_mho_conv > 0.95 condition
-            if (T_mho_conv > 0.95) { // MHO Eq 14 case 1
-                 for (int k = 0; k < dim; ++k) {
-                     X_P2[i][k] = X_current[k] + factor_A[k] * (pop[leader_idx][k] - I2 * MG[k]);
-                 }
-            } else { // MHO Eq 15 cases
-                 double r6 = rand_double(0, 1);
-                 if (r6 > 0.5) { // MHO Eq 15 case 1
-                      for (int k = 0; k < dim; ++k) {
-                          X_P2[i][k] = X_current[k] + factor_B[k] * (MG[k] - pop[leader_idx][k]);
-                      }
-                 } else { // MHO Eq 15 case 2: Random exploration
-                     for (int k = 0; k < dim; ++k) {
-                         X_P2[i][k] = lb_vec[k] + rand_double(0, 1) * (ub_vec[k] - lb_vec[k]);
-                     }
-                 }
+            if (T_mho_conv > 0.95) {
+                for (int i = 0; i < crops; ++i) {
+                    for (int j = 0; j < months; ++j) {
+                        X_P2[h][i][j] = X_current[i][j] + factor_A[i][j] * (hippo[leader_idx][i][j] - I2 * MG[i][j]);
+                    }
+                }
+            } else {
+                double r6 = rand_double(0, 1);
+                if (r6 > 0.5) {
+                    for (int i = 0; i < crops; ++i) {
+                        for (int j = 0; j < months; ++j) {
+                            X_P2[h][i][j] = X_current[i][j] + factor_B[i][j] * (MG[i][j] - hippo[leader_idx][i][j]);
+                        }
+                    }
+                } else {
+                    for (int i = 0; i < crops; ++i) {
+                        for (int j = 0; j < months; ++j) {
+                            X_P2[h][i][j] = lb_vec[i][j] + rand_double(0, 1) * (ub_vec[i][j] - lb_vec[i][j]);
+                        }
+                    }
+                }
             }
-
-            // Apply constraints and evaluate fitness for potential updates
-            apply_constraints(X_P1[i]);
-            apply_constraints(X_P2[i]);
-            double f_p1 = objective(X_P1[i]);
-            double f_p2 = objective(X_P2[i]);
-
-            // Greedy Selection for Phase 1: Update pop_next if P1 or P2 is better
-            if (f_p1 < fit_next[i]) {
-                pop_next[i] = X_P1[i];
-                fit_next[i] = f_p1;
+            apply_constraints(X_P1[h]);
+            apply_constraints(X_P2[h]);
+            double f_p1 = objective(X_P1[h]);
+            double f_p2 = objective(X_P2[h]);
+            if (f_p1 < fit_next[h]) {
+                hippo_next[h] = X_P1[h];
+                fit_next[h] = f_p1;
             }
-            if (f_p2 < fit_next[i]) { // Check P2 independently
-                pop_next[i] = X_P2[i];
-                fit_next[i] = f_p2;
+            if (f_p2 < fit_next[h]) {
+                hippo_next[h] = X_P2[h];
+                fit_next[h] = f_p2;
             }
         }
-        // Update pop/fit before next phase if needed (or update at the end)
-        // Let's update at the end of all phases + reverse learning
-
-        // HO Phase 2: Defense against predators
         cout << " MHO Phase 2 (Defense)...\n";
-        vector<double> predator_pos(dim);
-        for (int k = 0; k < dim; ++k) predator_pos[k] = lb_vec[k] + rand_double(0, 1) * (ub_vec[k] - lb_vec[k]);
+        vector<vector<double>> predator_pos(crops, vector<double>(months));
+        for (int i = 0; i < crops; ++i) for (int j = 0; j < months; ++j) predator_pos[i][j] = lb_vec[i][j] + rand_double(0, 1) * (ub_vec[i][j] - lb_vec[i][j]);
         double F_predator = objective(predator_pos);
-
-        for (int i = 0; i < N; ++i) { // Apply to all agents? HO.m applied to second half. MHO paper doesn't specify split. Let's apply to all.
-            vector<double> X_current = pop_next[i]; // Use potentially updated pop_next
-            vector<double> X_defend(dim);
-            vector<double> D_vec(dim);
-            for (int k = 0; k < dim; ++k) D_vec[k] = abs(predator_pos[k] - X_current[k]);
-
-            vector<double> RL_vec = levy_vector(dim);
+        for (int h = 0; h < N; ++h) {
+            vector<vector<double>> X_current = hippo_next[h];
+            vector<vector<double>> X_defend(crops, vector<double>(months));
+            vector<vector<double>> D_vec(crops, vector<double>(months));
+            for (int i = 0; i < crops; ++i) for (int j = 0; j < months; ++j) D_vec[i][j] = abs(predator_pos[i][j] - X_current[i][j]);
+            vector<double> RL_vec = levy_vector(crops * months);
             double b_factor = rand_double(2, 4);
             double c_factor = rand_double(1, 1.5);
             double d_factor = rand_double(2, 3);
@@ -381,123 +363,99 @@ int main() {
             double cos_l = cos(l_angle);
             double denom_factor = c_factor - d_factor * cos_l;
             if (abs(denom_factor) < 1e-9) denom_factor = (denom_factor >= 0 ? 1.0 : -1.0) * 1e-9;
-
-            // Using fit_next[i] as the comparison fitness for the *current* state after Phase 1 updates
-            if (fit_next[i] > F_predator) { // Predator is 'better'
-                for (int k = 0; k < dim; ++k) {
-                    double dist_k = max(abs(D_vec[k]), 1e-9); // Avoid division by zero
-                    X_defend[k] = RL_vec[k] * predator_pos[k] + (b_factor / denom_factor) * (1.0 / dist_k);
+            if (fit_next[h] > F_predator) {
+                int rl_idx = 0;
+                for (int i = 0; i < crops; ++i) {
+                    for (int j = 0; j < months; ++j, ++rl_idx) {
+                        double dist_k = max(abs(D_vec[i][j]), 1e-9);
+                        X_defend[i][j] = RL_vec[rl_idx] * predator_pos[i][j] + (b_factor / denom_factor) * (1.0 / dist_k);
+                    }
                 }
-            } else { // Hippo is 'better'
-                 for (int k = 0; k < dim; ++k) {
-                    double rand_val = rand_double(0,1);
-                    double denom_term = max(abs(2.0 * D_vec[k] + rand_val), 1e-9); // Avoid division by zero
-                    X_defend[k] = RL_vec[k] * predator_pos[k] + (b_factor / denom_factor) * (1.0 / denom_term);
-                 }
+            } else {
+                int rl_idx = 0;
+                for (int i = 0; i < crops; ++i) {
+                    for (int j = 0; j < months; ++j, ++rl_idx) {
+                        double rand_val = rand_double(0,1);
+                        double denom_term = max(abs(2.0 * D_vec[i][j] + rand_val), 1e-9);
+                        X_defend[i][j] = RL_vec[rl_idx] * predator_pos[i][j] + (b_factor / denom_factor) * (1.0 / denom_term);
+                    }
+                }
             }
-
             apply_constraints(X_defend);
             double f_defend = objective(X_defend);
-            if (f_defend < fit_next[i]) {
-                pop_next[i] = X_defend;
-                fit_next[i] = f_defend;
+            if (f_defend < fit_next[h]) {
+                hippo_next[h] = X_defend;
+                fit_next[h] = f_defend;
             }
         }
-
-        // HO Phase 3: Escaping from the Predator (Exploitation)
         cout << " MHO Phase 3 (Escape)...\n";
         double t_factor_ho = max(1.0, (double)t_iter);
-        vector<double> lb_local(dim), ub_local(dim);
-        for(int k=0; k<dim; ++k) {
-            lb_local[k] = lb_vec[k] / t_factor_ho;
-            ub_local[k] = ub_vec[k] / t_factor_ho;
+        vector<vector<double>> lb_local(crops, vector<double>(months)), ub_local(crops, vector<double>(months));
+        for(int i=0; i<crops; ++i) for(int j=0; j<months; ++j) {
+            lb_local[i][j] = lb_vec[i][j] / t_factor_ho;
+            ub_local[i][j] = ub_vec[i][j] / t_factor_ho;
         }
-
-        for (int i = 0; i < N; ++i) {
-            vector<double> X_current = pop_next[i]; // Use potentially updated pop_next
-            vector<double> X_escape(dim);
-
-            vector<double> factor_D(dim);
+        for (int h = 0; h < N; ++h) {
+            vector<vector<double>> X_current = hippo_next[h];
+            vector<vector<double>> X_escape(crops, vector<double>(months));
+            vector<vector<double>> factor_D(crops, vector<double>(months));
             int s_scenario = rand_int(0, 2);
-            if (s_scenario == 0) for(int k=0; k<dim; ++k) factor_D[k] = 2.0 * rand_double(0, 1) - 1.0;
-            else if (s_scenario == 1) { double r=rand_double(0,1); fill(factor_D.begin(), factor_D.end(), r); }
-            else { double rn=rand_normal(); fill(factor_D.begin(), factor_D.end(), rn); }
-
+            if (s_scenario == 0) for(int i=0; i<crops; ++i) for(int j=0; j<months; ++j) factor_D[i][j] = 2.0 * rand_double(0, 1) - 1.0;
+            else if (s_scenario == 1) { double r=rand_double(0,1); for(int i=0; i<crops; ++i) for(int j=0; j<months; ++j) factor_D[i][j] = r; }
+            else { double rn=rand_normal(); for(int i=0; i<crops; ++i) for(int j=0; j<months; ++j) factor_D[i][j] = rn; }
             double r10 = rand_double(0, 1);
-
-            for (int k = 0; k < dim; ++k) {
-                X_escape[k] = X_current[k] + r10 * (lb_local[k] + factor_D[k] * (ub_local[k] - lb_local[k]));
+            for (int i = 0; i < crops; ++i) {
+                for (int j = 0; j < months; ++j) {
+                    X_escape[i][j] = X_current[i][j] + r10 * (lb_local[i][j] + factor_D[i][j] * (ub_local[i][j] - lb_local[i][j]));
+                }
             }
-
             apply_constraints(X_escape);
             double f_escape = objective(X_escape);
-            if (f_escape < fit_next[i]) {
-                pop_next[i] = X_escape;
-                fit_next[i] = f_escape;
+            if (f_escape < fit_next[h]) {
+                hippo_next[h] = X_escape;
+                fit_next[h] = f_escape;
             }
         }
-
-
-        // MHO Modification 3: Small-hole imaging reverse learning
         cout << " MHO Reverse Learning Step...\n";
-        for (int i = 0; i < N; ++i) {
-            vector<double> X_current_updated = pop_next[i]; // Position after HO phases 1-3
-            vector<double> X_rev(dim);
-
-            // Calculate reversed solution (MHO Eq. 18)
-            for (int k = 0; k < dim; ++k) {
-                X_rev[k] = (lb_vec[k] + ub_vec[k]) - X_current_updated[k];
+        for (int h = 0; h < N; ++h) {
+            vector<vector<double>> X_current_updated = hippo_next[h];
+            vector<vector<double>> X_rev(crops, vector<double>(months));
+            for (int i = 0; i < crops; ++i) {
+                for (int j = 0; j < months; ++j) {
+                    X_rev[i][j] = (lb_vec[i][j] + ub_vec[i][j]) - X_current_updated[i][j];
+                }
             }
             apply_constraints(X_rev);
             double f_rev = objective(X_rev);
-
-            // Update if reversed solution is better than the one from HO phases
-            if (f_rev < fit_next[i]) {
-                 pop_next[i] = X_rev;
-                 fit_next[i] = f_rev;
-                 // cout << "  Hippo " << i << " updated (Reversed). Fitness: " << f_rev << endl; // Verbose
+            if (f_rev < fit_next[h]) {
+                hippo_next[h] = X_rev;
+                fit_next[h] = f_rev;
             }
         }
-
-
-        // Final update of population and fitness for this iteration
-        pop = pop_next;
+        hippo = hippo_next;
         fit = fit_next;
-
-        // Find and update global best
         leader_idx = min_element(fit.begin(), fit.end()) - fit.begin();
         if (fit[leader_idx] < best_fit_global) {
             best_fit_global = fit[leader_idx];
-            best_sol_global = pop[leader_idx];
-             cout << " MHO New Global Best Found: " << best_fit_global << endl;
+            best_sol_global = hippo[leader_idx];
+            cout << " MHO New Global Best Found: " << best_fit_global << endl;
         }
-        print_population("MHO", t_iter, pop, fit, leader_idx);
-        // --- End MHO Update Cycle ---
-
-
-        // --- Iteration Summary ---
+        print_population("MHO", t_iter, hippo, fit, leader_idx);
         if (t_iter % 50 == 0 || t_iter == T_max) {
             cout << "\n-----------------------------------------";
             cout << "\nIteration " << t_iter << " Summary:";
             cout << "\n MHO Best Fitness: " << fixed << setprecision(8) << best_fit_global;
             cout << "\n-----------------------------------------\n";
         }
-        // --- End Iteration Summary ---
-
     }
-    // --- End Main Optimization Loop ---
-
-    // --- Final Output ---
     cout << "\n=========================================";
     cout << "\nOptimization Finished!";
     cout << "\n=========================================\n";
-
-    leader_idx = min_element(fit.begin(), fit.end()) - fit.begin(); // Ensure leader is current
-    print_population("MHO Final", T_max, pop, fit, leader_idx);
+    leader_idx = min_element(fit.begin(), fit.end()) - fit.begin();
+    print_population("MHO Final", T_max, hippo, fit, leader_idx);
     cout << "MHO Optimal Fitness: " << fixed << setprecision(8) << best_fit_global << "\n";
     cout << "MHO Optimal Solution (Variables): ";
-    for(double val : best_sol_global) cout << fixed << setprecision(5) << val << " ";
+    for(int i=0; i<crops; ++i) for(int j=0; j<months; ++j) cout << fixed << setprecision(5) << best_sol_global[i][j] << " ";
     cout << endl;
-
     return 0;
 }
