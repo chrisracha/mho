@@ -42,14 +42,10 @@ The algorithm is tested on **crop allocation optimization** problems with the fo
 ```
 ├── mho.cpp                    # Main C++ implementation (503 lines)
 ├── mho.py                     # Python implementation with detailed logging
-├── mho-real.cpp              # Alternative C++ implementation
 ├── a.cpp                      # Additional implementation variant
-├── Salcedo_Revised_Proposal_Document.pdf  # Thesis proposal document
 ├── ho.pdf                     # Original HO algorithm paper
 ├── mancul files/
 │   └── obj func.pdf          # Objective function documentation
-├── mho_detailed_run_output.txt    # Detailed algorithm execution log
-├── mho_sample_run_output.txt      # Sample execution output
 └── README.md                 # This file
 ```
 
@@ -122,9 +118,6 @@ The algorithm includes comprehensive logging and output generation:
 - Convergence analysis
 - Detailed execution traces
 
-Sample outputs are provided in:
-- `mho_detailed_run_output.txt` - Complete execution log
-- `mho_sample_run_output.txt` - Sample results
 
 ## 🔬 Research Contributions
 
@@ -136,18 +129,11 @@ Sample outputs are provided in:
 ## 📚 References
 
 - Original Hippopotamus Optimization (HO) algorithm
-- Chaotic map applications in metaheuristics
-- Crop allocation optimization literature
-- Reverse learning mechanisms in optimization
+- Modified Hippopotamus Optimization (MHO) algorithm
 
 ## 👨‍🎓 Thesis Information
 
 This work is part of a thesis research project focusing on metaheuristic optimization algorithms and their applications to agricultural planning problems.
-
-**Author**: [Your Name]  
-**Institution**: [Your Institution]  
-**Supervisor**: [Supervisor Name]  
-**Year**: [Year]
 
 ## 📄 License
 
