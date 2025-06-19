@@ -11,7 +11,7 @@ The primary goal of this research is to enhance the performance of the original 
 1. **Chaotic Initialization**: Using sine chaotic maps for improved population diversity
 2. **Enhanced Convergence**: Modified convergence factors for better exploration-exploitation balance
 3. **Reverse Learning**: Small-hole imaging reverse learning mechanism for escaping local optima
-4. **Real-world Application**: Applied to crop allocation optimization problems
+4. **Real-world Application**: Applied to a sample land allocation and scheduling problem
 
 ## 🚀 Key Features
 
